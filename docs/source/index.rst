@@ -47,3 +47,4 @@ Open Vehicles Monitoring System
 
    components/retools_pidscan/docs/index
    components/retools_testerpresent/docs/index
+   components/esp32bluetooth/docs/index

@@ -52,6 +52,7 @@ class esp32bluetooth : public pcp, public InternalRamAllocated
 
   public:
     void SetPowerMode(PowerMode powermode);
+    void AutoInit();
 
   protected:
     bool m_service_running;

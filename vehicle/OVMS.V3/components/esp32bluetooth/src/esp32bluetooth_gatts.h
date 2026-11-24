@@ -88,7 +88,15 @@ class esp32bluetoothApp
     virtual void EventAddCharDescr(esp_ble_gatts_cb_param_t::gatts_add_char_descr_evt_param *adddescr);
 
   public:
+    // Encryption to request from a new connection (only called for the primary app),
+    // return false to not request encryption:
+    virtual bool GetConnectSecurity(esp_ble_sec_act_t* action);
+    // Decide on a pairing request (only called for the primary app):
+    virtual bool AcceptSecurityRequest(esp_bd_addr_t bda);
+
+  public:
     const char* m_name;
+    bool m_registered;
     uint16_t m_app_slot;
     esp_gatt_if_t m_gatts_if;
     uint16_t m_app_id;
@@ -114,9 +122,11 @@ class esp32bluetoothGATTS
 
   public:
     void RegisterApp(esp32bluetoothApp* app);
+    bool AcceptSecurityRequest(esp_bd_addr_t bda);
 
   private:
     std::vector<esp32bluetoothApp*> m_apps;
+    esp32bluetoothApp* m_primary_app;
   };
 
 extern esp32bluetoothGATTS MyBluetoothGATTS;

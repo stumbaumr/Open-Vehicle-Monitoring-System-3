@@ -78,6 +78,8 @@ esp32bluetoothCharacteristic::~esp32bluetoothCharacteristic()
 esp32bluetoothApp::esp32bluetoothApp(const char* name)
   {
   m_name = name;
+  m_registered = false;
+  m_app_slot = 0;
   m_gatts_if = ESP_GATT_IF_NONE;
   m_app_id = 0;
   m_conn_id = 0;
@@ -88,6 +90,18 @@ esp32bluetoothApp::esp32bluetoothApp(const char* name)
 
 esp32bluetoothApp::~esp32bluetoothApp()
   {
+  }
+
+bool esp32bluetoothApp::GetConnectSecurity(esp_ble_sec_act_t* action)
+  {
+  // IO capability is "none", so MITM protection is not possible
+  *action = ESP_BLE_SEC_ENCRYPT_NO_MITM;
+  return true;
+  }
+
+bool esp32bluetoothApp::AcceptSecurityRequest(esp_bd_addr_t bda)
+  {
+  return false;
   }
 
 void esp32bluetoothApp::EventRegistered(esp_ble_gatts_cb_param_t::gatts_reg_evt_param *reg)
@@ -185,6 +199,7 @@ void ble_gatts_event_handler(esp_gatts_cb_event_t event,
 esp32bluetoothGATTS::esp32bluetoothGATTS()
   {
   ESP_LOGI(TAG, "Initialising Bluetooth GATTS (8012)");
+  m_primary_app = NULL;
   }
 
 esp32bluetoothGATTS::~esp32bluetoothGATTS()
@@ -207,6 +222,8 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
   {
   for (esp32bluetoothApp* app : m_apps)
     {
+    if (!app->m_registered)
+      continue;
     if (event == ESP_GATTS_REG_EVT)
       {
       // Store the gatts_if for the registered app
@@ -237,17 +254,11 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
           {
           ESP_LOGI(TAG, "ESP_GATTS_REG_EVT/%s",app->m_name);
 
-          std::string devname = MyConfig.GetParamValue("vehicle", "id");
-          if (devname.empty())
-            {
-            devname = std::string("OVMS");
-            }
-          else
-            {
-            devname.insert(0,"OVMS ");
-            }
+          std::string devname = MyConfig.GetParamValue("bluetooth", "elm327.name", "OBDII");
           esp_ble_gap_set_device_name(devname.c_str());
-          esp_ble_gap_config_local_privacy(true);
+          // Like an ELM327 adapter, use the public address (no privacy).
+          // The privacy complete event configures the advertising data.
+          esp_ble_gap_config_local_privacy(false);
 
           app->EventRegistered(&param->reg);
           break;
@@ -326,7 +337,7 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
 
           app->m_conn_id = param->connect.conn_id;
 
-          if (app->m_app_slot == 0)
+          if (app == m_primary_app)
             {
             esp_ble_conn_update_params_t conn_params;
             memset(&conn_params,0,sizeof(conn_params));
@@ -340,7 +351,11 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
 
             //start sent the update connection parameters to the peer device.
             esp_ble_gap_update_conn_params(&conn_params);
-            esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_MITM);
+            esp_ble_sec_act_t action;
+            if (app->GetConnectSecurity(&action))
+              {
+              esp_ble_set_encryption(param->connect.remote_bda, action);
+              }
             }
           break;
           }
@@ -368,7 +383,7 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
             param->disconnect.remote_bda[5]);
           MyEvents.SignalEvent(signal, NULL);
 
-          if (app->m_app_slot == 0)
+          if (app == m_primary_app)
             {
             MyBluetoothGAP.StartAdvertising();
             }
@@ -426,8 +441,14 @@ void esp32bluetoothGATTS::EventHandler(esp_gatts_cb_event_t event,
 
 void esp32bluetoothGATTS::RegisterAllApps()
   {
+  m_primary_app = NULL;
   for (esp32bluetoothApp* app : m_apps)
     {
+    app->m_registered = true;
+    if (m_primary_app == NULL)
+      {
+      m_primary_app = app;
+      }
     esp_err_t ret = esp_ble_gatts_app_register(app->m_app_id);
     if (ret)
       {
@@ -445,7 +466,13 @@ void esp32bluetoothGATTS::UnregisterAllApps()
   {
   for (esp32bluetoothApp* app : m_apps)
     {
+    if (!app->m_registered)
+      continue;
+    app->m_registered = false;
+    if (app->m_gatts_if == ESP_GATT_IF_NONE)
+      continue;
     esp_err_t ret = esp_ble_gatts_app_unregister(app->m_gatts_if);
+    app->m_gatts_if = ESP_GATT_IF_NONE;
     if (ret)
       {
       ESP_LOGE(TAG, "App %s unregister error, error code = %x",
@@ -462,4 +489,11 @@ void esp32bluetoothGATTS::RegisterApp(esp32bluetoothApp* app)
   {
   m_apps.push_back(app);
   app->m_app_slot = m_apps.size()-1;
+  }
+
+bool esp32bluetoothGATTS::AcceptSecurityRequest(esp_bd_addr_t bda)
+  {
+  if (m_primary_app == NULL)
+    return false;
+  return m_primary_app->AcceptSecurityRequest(bda);
   }
