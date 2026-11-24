@@ -31,6 +31,7 @@
 #include <string.h>
 #include "esp_system.h"
 #include "esp32bluetooth_gap.h"
+#include "esp32bluetooth_gatts.h"
 #include "ovms_events.h"
 
 #include "ovms_log.h"
@@ -42,8 +43,9 @@ esp32bluetoothGAP MyBluetoothGAP __attribute__ ((init_priority (8011)));
 #define SCAN_RSP_CONFIG_FLAG        (1 << 1)
 
 static uint8_t ovms_manufacturer[4]={'O', 'V', 'M', 'S'};
-static uint8_t ovms_sec_service_uuid[16] = // LSB ... MSB
-  { 0x76, 0x5d, 0xf7, 0x40, 0xcc, 0x70, 0x0a, 0xb6, 0xbb, 0x43, 0x08, 0x30, 0x38, 0xcb, 0x2f, 0xe7 };
+// ELM327 BLE adapter service 0xFFF0 in 128 bit base UUID form (advertised as 16 bit UUID):
+static uint8_t elm327_service_uuid[16] = // LSB ... MSB
+  { 0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xf0, 0xff, 0x00, 0x00 };
 
 static const char *esp_key_type_to_str(esp_ble_key_type_t key_type)
   {
@@ -108,8 +110,8 @@ esp32bluetoothGAP::esp32bluetoothGAP()
   m_adv_config.p_manufacturer_data =  NULL;
   m_adv_config.service_data_len = 0;
   m_adv_config.p_service_data = NULL;
-  m_adv_config.service_uuid_len = sizeof(ovms_sec_service_uuid);
-  m_adv_config.p_service_uuid = ovms_sec_service_uuid;
+  m_adv_config.service_uuid_len = sizeof(elm327_service_uuid);
+  m_adv_config.p_service_uuid = elm327_service_uuid;
   m_adv_config.flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
 
   memset(&m_scan_rsp_config,0,sizeof(m_scan_rsp_config));
@@ -122,7 +124,7 @@ esp32bluetoothGAP::esp32bluetoothGAP()
   m_adv_params.adv_int_min        = 0x100;
   m_adv_params.adv_int_max        = 0x100;
   m_adv_params.adv_type           = ADV_TYPE_IND;
-  m_adv_params.own_addr_type      = BLE_ADDR_TYPE_RANDOM;
+  m_adv_params.own_addr_type      = BLE_ADDR_TYPE_PUBLIC;
   m_adv_params.channel_map        = ADV_CHNL_ALL;
   m_adv_params.adv_filter_policy  = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
   }
@@ -218,9 +220,12 @@ void esp32bluetoothGAP::EventHandler(esp_gap_ble_cb_event_t event,
     case ESP_GAP_BLE_SEC_REQ_EVT:
       /* send the positive(true) security response to the peer device to accept the security request.
       If not accept the security request, should sent the security response with negative(false) accept value*/
-      ESP_LOGI(TAG,"ESP_GAP_BLE_SEC_REQ_EVT");
-      esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
+      {
+      bool accept = MyBluetoothGATTS.AcceptSecurityRequest(param->ble_security.ble_req.bd_addr);
+      ESP_LOGI(TAG,"ESP_GAP_BLE_SEC_REQ_EVT %s", accept ? "accepted" : "rejected");
+      esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, accept);
       break;
+      }
     case ESP_GAP_BLE_PASSKEY_NOTIF_EVT:  ///the app will receive this evt when the IO  has Output capability and the peer device IO has Input capability.
       ///show the passkey number to the user to input it in the peer deivce.
       ESP_LOGI(TAG, "ESP_GAP_BLE_PASSKEY_NOTIF_EVT passkey: %d", param->ble_security.key_notif.passkey);

@@ -1,6 +1,24 @@
 Open Vehicle Monitor System v3 - Change log
 
 ????-??-?? ???  ???????  OTA release
+- Bluetooth: replaced the experimental OVMS BLE services (console, device, metrics) by an ELM327 BLE
+    adapter emulation (work in progress). The module advertises the GATT service FFF0 (notify FFF1,
+    write FFF2) like common BLE OBD adapters, and forwards the OBD2/UDS requests of the connected app to
+    the vehicle CAN bus via the poller. Bonding is required; new devices can only pair while the pairing
+    window is open. Only read services are allowed by default. Bluetooth starts automatically after the
+    vehicle module. Bluetooth is not part of the standard builds: use `support/sdkconfig.bluetooth.hw31`
+    (updated to the current hardware 3.1 configuration; WiFi IRAM optimizations disabled to fit the BLE
+    controller).
+  New commands:
+    bt elm327 [status]                                -- show ELM327 emulation status
+    bt elm327 pair [<seconds>]                        -- open the pairing window (default 120 s, 0 = close)
+  New configs:
+    [auto] bluetooth (bool, default yes)              -- start bluetooth at boot
+    [bluetooth] elm327.name (default OBDII)           -- BLE device name (restart bluetooth to apply)
+    [bluetooth] elm327.bus (default can1)             -- CAN bus for the requests
+    [bluetooth] elm327.protocol (default 6)           -- protocol for ATSP0 (6/7/8/9)
+    [bluetooth] elm327.timeout (ms, default 500)      -- minimum response timeout
+    [bluetooth] elm327.services (default 01,02,03,06,07,09,0A,19,1A,21,22,3E) -- allowed service IDs, * = all
 - Network Manager / WiFi / Cellular / Power Management:
     - Added centralized V2/V3 server connection check in `OvmsNetManager` (`[network] wifi.conncheck.v2v3`,
       configurable in both WiFi and Cellular web UIs, enabled by default when V2 or V3 server is active).

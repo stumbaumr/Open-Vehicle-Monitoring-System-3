@@ -98,7 +98,9 @@ void esp32bluetooth::StartService()
 
   /* set the security iocap & auth_req & key size & init key response key parameters to the stack*/
   esp_ble_auth_req_t auth_req = ESP_LE_AUTH_BOND;     //bonding with peer device after authentication
-  esp_ble_io_cap_t iocap = ESP_IO_CAP_OUT;           //set the IO capability to output but no input
+  // ELM327 clients have no passkey input: "Just Works" bonding, access is
+  // controlled by the pairing window (see "bt elm327 pair")
+  esp_ble_io_cap_t iocap = ESP_IO_CAP_NONE;
   uint8_t key_size = 16;      //the key size should be 7~16 bytes
   uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
   uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
@@ -158,6 +160,12 @@ void esp32bluetooth::StopService()
     }
 
   m_service_running = false;
+  }
+
+void esp32bluetooth::AutoInit()
+  {
+  if (MyConfig.GetParamValueBool("auto", "bluetooth", true))
+    SetPowerMode(On);
   }
 
 bool esp32bluetooth::IsServiceRunning()
@@ -254,6 +262,8 @@ esp32bluetoothInit::esp32bluetoothInit()
   ESP_LOGI(TAG, "Initialising ESP32 BLUETOOTH (8010)");
 
   ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+
+  MyConfig.RegisterParam("bluetooth", "Bluetooth", true, true);
 
   OvmsCommand* cmd_bt = MyCommandApp.RegisterCommand("bt","BLUETOOTH framework", bluetooth_status);
   cmd_bt->RegisterCommand("status","Show bluetooth status",bluetooth_status);
