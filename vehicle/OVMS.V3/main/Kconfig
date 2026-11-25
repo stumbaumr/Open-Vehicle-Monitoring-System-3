@@ -742,13 +742,22 @@ endmenu # Vehicle Support
 menu "Component Options"
     depends on OVMS
 
+# ESP-IDF 3.3 NimBLE: the option NIMBLE_MEM_ALLOC_MODE_EXTERNAL depends on
+# ESP32_SPIRAM_SUPPORT, which is named SPIRAM_SUPPORT in ESP-IDF 3.3. This
+# symbol makes the NimBLE SPI RAM allocation available.
+config ESP32_SPIRAM_SUPPORT
+    bool
+    default y if SPIRAM_SUPPORT
+
 config OVMS_COMP_BLUETOOTH
     bool "Include support for Bluetooth"
     default y
     depends on OVMS
     depends on BT_ENABLED
+    depends on BLUEDROID_ENABLED || NIMBLE_ENABLED
     help
         Enable to include support for bluetooth communications.
+        Host stack: Bluedroid or NimBLE (NimBLE needs less internal RAM).
 
 config OVMS_COMP_WIFI
     bool "Include support for WIFI"

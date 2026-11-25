@@ -34,6 +34,23 @@ The template is the standard hardware 3.1 configuration with these changes:
 - Bluetooth memory allocation from SPI RAM first, dynamic environment memory, 2 connections
 - ``CONFIG_ESP32_WIFI_IRAM_OPT`` and ``CONFIG_ESP32_WIFI_RX_IRAM_OPT`` disabled to free IRAM
   for the Bluetooth controller (WiFi throughput is slightly lower)
+- 10 instead of 16 WiFi static RX buffers and no WiFi AMPDU RX, 1 BLE connection, no BLE scan
+  duplicate filter: this reduces the internal RAM usage
+
+To build with the NimBLE host stack instead of Bluedroid, use the NimBLE template::
+
+  cp support/sdkconfig.bluetooth-nimble.hw31 sdkconfig
+  make
+
+NimBLE needs less internal RAM and approximately 230 KB less flash than Bluedroid. The template
+puts the NimBLE buffers in SPI RAM and only enables the peripheral role. The function and the
+commands are the same with both host stacks.
+
+.. warning::
+
+  The Bluetooth controller and stack need approximately 40 KB or more of the internal RAM of the
+  ESP32. With a cellular modem, the vehicle module and the server connections, the free internal
+  RAM can become too low. Check the free internal RAM with ``module memory`` (``Free 8-bit``).
 
 
 -----
@@ -43,8 +60,10 @@ Setup
 1. Make sure that a vehicle module is loaded and that the CAN bus is in active mode. The
    vehicle module normally starts the bus. With the empty vehicle module ``NONE``, start the
    bus manually, for example: ``can can1 start active 500000``.
-2. Bluetooth starts automatically after the vehicle module (``[auto] bluetooth``, default
-   ``yes``). To start or stop it manually::
+2. Bluetooth starts automatically 60 seconds after the boot (``[auto] bluetooth``, default
+   ``yes``). The delay lets the network, modem and server connections allocate their memory
+   first. If less than ``[bluetooth] minfree`` bytes of internal RAM are free, the automatic
+   start is skipped and the log shows an error. To start or stop Bluetooth manually::
 
      power bluetooth on
      power bluetooth off
@@ -75,6 +94,8 @@ Configuration
 Config                              Default          Description
 =================================== ================ =================================================
 [auto] bluetooth                    yes              Start Bluetooth at boot
+[bluetooth] minfree                 40000            Automatic start: minimum free internal RAM
+                                                     in bytes
 [bluetooth] elm327.name             OBDII            BLE device name (restart Bluetooth to apply)
 [bluetooth] elm327.bus              can1             CAN bus for the requests
 [bluetooth] elm327.protocol         6                Protocol for ``ATSP0`` (auto): 6 = CAN 11/500,

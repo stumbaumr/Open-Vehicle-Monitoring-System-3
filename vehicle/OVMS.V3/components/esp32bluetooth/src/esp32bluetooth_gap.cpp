@@ -28,6 +28,9 @@
 ; THE SOFTWARE.
 */
 
+#include "sdkconfig.h"
+#ifdef CONFIG_BLUEDROID_ENABLED
+
 #include <string.h>
 #include "esp_system.h"
 #include "esp32bluetooth_gap.h"
@@ -298,3 +301,5 @@ void esp32bluetoothGAP::EventHandler(esp_gap_ble_cb_event_t event,
       break;
     }
   }
+
+#endif // CONFIG_BLUEDROID_ENABLED

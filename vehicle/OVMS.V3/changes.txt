@@ -5,15 +5,19 @@ Open Vehicle Monitor System v3 - Change log
     adapter emulation (work in progress). The module advertises the GATT service FFF0 (notify FFF1,
     write FFF2) like common BLE OBD adapters, and forwards the OBD2/UDS requests of the connected app to
     the vehicle CAN bus via the poller. Bonding is required; new devices can only pair while the pairing
-    window is open. Only read services are allowed by default. Bluetooth starts automatically after the
-    vehicle module. Bluetooth is not part of the standard builds: use `support/sdkconfig.bluetooth.hw31`
-    (updated to the current hardware 3.1 configuration; WiFi IRAM optimizations disabled to fit the BLE
-    controller).
+    window is open. Only read services are allowed by default. Bluetooth starts automatically 60 seconds
+    after the boot, if enough internal RAM is free. Bluetooth is not part of the standard builds: use
+    `support/sdkconfig.bluetooth.hw31` (updated to the current hardware 3.1 configuration; WiFi IRAM
+    optimizations disabled to fit the BLE controller; fewer WiFi static RX buffers, no WiFi AMPDU RX and
+    one BLE connection to reduce the internal RAM usage). Alternative build with the NimBLE host stack
+    instead of Bluedroid (less internal RAM and flash, NimBLE buffers in SPI RAM):
+    `support/sdkconfig.bluetooth-nimble.hw31`.
   New commands:
     bt elm327 [status]                                -- show ELM327 emulation status
     bt elm327 pair [<seconds>]                        -- open the pairing window (default 120 s, 0 = close)
   New configs:
     [auto] bluetooth (bool, default yes)              -- start bluetooth at boot
+    [bluetooth] minfree (bytes, default 40000)        -- auto start: minimum free internal RAM
     [bluetooth] elm327.name (default OBDII)           -- BLE device name (restart bluetooth to apply)
     [bluetooth] elm327.bus (default can1)             -- CAN bus for the requests
     [bluetooth] elm327.protocol (default 6)           -- protocol for ATSP0 (6/7/8/9)

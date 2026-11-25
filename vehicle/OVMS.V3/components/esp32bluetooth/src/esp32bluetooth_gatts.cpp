@@ -28,6 +28,9 @@
 ; THE SOFTWARE.
 */
 
+#include "sdkconfig.h"
+#ifdef CONFIG_BLUEDROID_ENABLED
+
 #include <string.h>
 #include "esp_system.h"
 #include "esp32bluetooth_gap.h"
@@ -497,3 +500,5 @@ bool esp32bluetoothGATTS::AcceptSecurityRequest(esp_bd_addr_t bda)
     return false;
   return m_primary_app->AcceptSecurityRequest(bda);
   }
+
+#endif // CONFIG_BLUEDROID_ENABLED

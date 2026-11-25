@@ -31,19 +31,36 @@
 #include <string.h>
 #include "esp_system.h"
 #include "esp32bluetooth.h"
+#ifdef CONFIG_BLUEDROID_ENABLED
 #include "esp32bluetooth_gap.h"
 #include "esp32bluetooth_gatts.h"
+#endif
 #include "esp_bt.h"
+#include "ovms_command.h"
 #include "ovms_peripherals.h"
 #include "ovms_config.h"
+#include "ovms_events.h"
+#include "esp_heap_caps.h"
 
 #include "ovms_log.h"
 static const char *TAG = "bt";
+
+// Automatic start: delay after boot, so the network, modem and server
+// connections have allocated their internal RAM before Bluetooth starts
+#define BT_AUTOSTART_DELAY_EVENT    "ticker.60"
+// Automatic start: minimum free internal RAM (default for [bluetooth] minfree)
+#define BT_AUTOSTART_MINFREE        40000
+
+static size_t bt_internal_free()
+  {
+  return heap_caps_get_free_size(MALLOC_CAP_8BIT|MALLOC_CAP_INTERNAL);
+  }
 
 esp32bluetooth::esp32bluetooth(const char* name)
   : pcp(name)
   {
   m_service_running = false;
+  m_autostart_pending = false;
   m_powermode = Off;
   }
 
@@ -53,43 +70,75 @@ esp32bluetooth::~esp32bluetooth()
 
 void esp32bluetooth::StartService()
   {
-  esp_err_t ret;
-
   if (m_service_running)
     {
     ESP_LOGE(TAG,"Bluetooth service cannot start (already running)");
     return;
     }
 
-  ESP_LOGI(TAG,"Powering bluetooth on...");
+  size_t free_before = bt_internal_free();
+  ESP_LOGI(TAG,"Powering bluetooth on (internal RAM free: %u bytes)...", free_before);
+
+  if (!StartStack())
+    return;
+
+  m_service_running = true;
+
+  size_t free_after = bt_internal_free();
+  ESP_LOGI(TAG,"Bluetooth on (internal RAM free: %u bytes, used by bluetooth: %d bytes)",
+    free_after, (int)free_before - (int)free_after);
+  }
+
+void esp32bluetooth::StopService()
+  {
+  if (!m_service_running)
+    {
+    ESP_LOGE(TAG,"Bluetooth service cannot stop (not running)");
+    return;
+    }
+
+  ESP_LOGI(TAG,"Powering bluetooth off...");
+
+  if (!StopStack())
+    return;
+
+  m_service_running = false;
+  ESP_LOGI(TAG,"Bluetooth off (internal RAM free: %u bytes)", bt_internal_free());
+  }
+
+#ifdef CONFIG_BLUEDROID_ENABLED
+
+bool esp32bluetooth::StartStack()
+  {
+  esp_err_t ret;
 
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   ret = esp_bt_controller_init(&bt_cfg);
   if (ret)
     {
     ESP_LOGE(TAG, "init controller failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
   if (ret)
     {
     ESP_LOGE(TAG, "enable controller failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bluedroid_init();
   if (ret)
     {
     ESP_LOGE(TAG, "init bluetooth failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bluedroid_enable();
   if (ret)
     {
     ESP_LOGE(TAG, "enable bluetooth failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   MyBluetoothGATTS.RegisterForEvents();
@@ -114,20 +163,12 @@ void esp32bluetooth::StartService()
   esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, sizeof(uint8_t));
   esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(uint8_t));
 
-  m_service_running = true;
+  return true;
   }
 
-void esp32bluetooth::StopService()
+bool esp32bluetooth::StopStack()
   {
   esp_err_t ret;
-
-  if (!m_service_running)
-    {
-    ESP_LOGE(TAG,"Bluetooth service cannot stop (not running)");
-    return;
-    }
-
-  ESP_LOGI(TAG,"Powering bluetooth off...");
 
   MyBluetoothGATTS.UnregisterAllApps();
 
@@ -135,37 +176,69 @@ void esp32bluetooth::StopService()
   if (ret)
     {
     ESP_LOGE(TAG, "disable bluetooth failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bluedroid_deinit();
   if (ret)
     {
     ESP_LOGE(TAG, "deinit bluetooth failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bt_controller_disable();
   if (ret)
     {
     ESP_LOGE(TAG, "disable controller failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
   ret = esp_bt_controller_deinit();
   if (ret)
     {
     ESP_LOGE(TAG, "deinit controller failed: %s", esp_err_to_name(ret));
-    return;
+    return false;
     }
 
-  m_service_running = false;
+  return true;
   }
+
+#endif // CONFIG_BLUEDROID_ENABLED
 
 void esp32bluetooth::AutoInit()
   {
-  if (MyConfig.GetParamValueBool("auto", "bluetooth", true))
-    SetPowerMode(On);
+  if (!MyConfig.GetParamValueBool("auto", "bluetooth", true))
+    return;
+  // The start is delayed, see AutoStartTicker()
+  ESP_LOGI(TAG, "Bluetooth auto start in 60 seconds");
+  m_autostart_pending = true;
+  using std::placeholders::_1;
+  using std::placeholders::_2;
+  MyEvents.RegisterEvent(TAG, BT_AUTOSTART_DELAY_EVENT,
+    std::bind(&esp32bluetooth::AutoStartTicker, this, _1, _2));
+  }
+
+void esp32bluetooth::AutoStartTicker(std::string event, void* data)
+  {
+  if (!m_autostart_pending)
+    return;
+  m_autostart_pending = false;
+  if (m_service_running)
+    return;
+
+  // The Bluetooth stack needs internal RAM (task stacks, controller buffers).
+  // If the free internal RAM is too low, the start can make other components
+  // (e.g. the cellular modem) fail. Do not start, the user can start manually
+  // with "power bluetooth on".
+  size_t minfree = MyConfig.GetParamValueInt("bluetooth", "minfree", BT_AUTOSTART_MINFREE);
+  size_t freemem = bt_internal_free();
+  if (freemem < minfree)
+    {
+    ESP_LOGE(TAG, "Bluetooth auto start skipped: internal RAM free %u bytes < %u bytes ([bluetooth] minfree)",
+      freemem, minfree);
+    return;
+    }
+  SetPowerMode(On);
   }
 
 bool esp32bluetooth::IsServiceRunning()
@@ -190,6 +263,8 @@ void esp32bluetooth::SetPowerMode(PowerMode powermode)
       break;
     };
   }
+
+#ifdef CONFIG_BLUEDROID_ENABLED
 
 void bluetooth_status(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int argc, const char* const* argv)
   {
@@ -251,6 +326,12 @@ void bluetooth_clear(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int ar
 
   free(clist);
   }
+
+#endif // CONFIG_BLUEDROID_ENABLED
+
+// "bt status" / "bt clear": stack specific implementation
+void bluetooth_status(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int argc, const char* const* argv);
+void bluetooth_clear(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int argc, const char* const* argv);
 
 class esp32bluetoothInit
   {

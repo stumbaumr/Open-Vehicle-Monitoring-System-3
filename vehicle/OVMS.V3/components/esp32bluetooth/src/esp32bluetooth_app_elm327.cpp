@@ -53,9 +53,11 @@ static const char *TAG = "bt-app-elm327";
 #define ELM_TASK_PRIORITY           5
 #define ELM_PAIRING_DEFAULT_SEC     120
 
+#ifdef CONFIG_BLUEDROID_ENABLED
 // All attributes require an encrypted (bonded) connection:
 #define ELM_PERM_READ               ESP_GATT_PERM_READ_ENCRYPTED
 #define ELM_PERM_WRITE              ESP_GATT_PERM_WRITE_ENCRYPTED
+#endif
 
 OvmsBluetoothAppELM327 MyBluetoothAppELM327 __attribute__ ((init_priority (8018)));
 
@@ -94,7 +96,11 @@ static void elm327_pair(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int
 // OvmsBluetoothAppELM327
 
 OvmsBluetoothAppELM327::OvmsBluetoothAppELM327()
-  : esp32bluetoothApp("elm327"), m_engine(this)
+  :
+#ifdef CONFIG_BLUEDROID_ENABLED
+    esp32bluetoothApp("elm327"),
+#endif
+    m_engine(this)
   {
   ESP_LOGI(TAG, "Initialising Bluetooth ELM327 App (8018)");
 
@@ -111,8 +117,15 @@ OvmsBluetoothAppELM327::OvmsBluetoothAppELM327()
   m_stat_tx_bytes = 0;
   m_stat_dropped = 0;
 
+#ifdef CONFIG_BLUEDROID_ENABLED
   m_app_id = GATTS_APP_UUID_OVMS_ELM327;
   MyBluetoothGATTS.RegisterApp(this);
+#endif
+#ifdef CONFIG_NIMBLE_ENABLED
+  m_conn_handle = 0xffff;   // BLE_HS_CONN_HANDLE_NONE
+  m_mtu = 0;
+  m_authorized = false;
+#endif
 
   OvmsCommand* cmd_bt = MyCommandApp.FindCommand("bt");
   if (cmd_bt)
@@ -127,6 +140,8 @@ OvmsBluetoothAppELM327::OvmsBluetoothAppELM327()
 OvmsBluetoothAppELM327::~OvmsBluetoothAppELM327()
   {
   }
+
+#ifdef CONFIG_BLUEDROID_ENABLED
 
 bool OvmsBluetoothAppELM327::GetConnectSecurity(esp_ble_sec_act_t* action)
   {
@@ -164,6 +179,13 @@ bool OvmsBluetoothAppELM327::IsBonded(esp_bd_addr_t bda)
   return found;
   }
 
+int OvmsBluetoothAppELM327::BondCount()
+  {
+  return esp_ble_get_bond_device_num();
+  }
+
+#endif // CONFIG_BLUEDROID_ENABLED
+
 void OvmsBluetoothAppELM327::OpenPairingWindow(int seconds)
   {
   if (seconds <= 0)
@@ -188,7 +210,7 @@ void OvmsBluetoothAppELM327::LoadConfig()
     ESP_LOGE(TAG, "Invalid [bluetooth] elm327.services '%s', using previous setting", services.c_str());
   }
 
-void OvmsBluetoothAppELM327::EventRegistered(esp_ble_gatts_cb_param_t::gatts_reg_evt_param *reg)
+void OvmsBluetoothAppELM327::StartTask()
   {
   if (m_queue == NULL)
     {
@@ -199,6 +221,13 @@ void OvmsBluetoothAppELM327::EventRegistered(esp_ble_gatts_cb_param_t::gatts_reg
     xTaskCreatePinnedToCore(TaskEntry, "OVMS BtElm327", ELM_TASK_STACK, (void*)this,
       ELM_TASK_PRIORITY, &m_task, CORE(1));
     }
+  }
+
+#ifdef CONFIG_BLUEDROID_ENABLED
+
+void OvmsBluetoothAppELM327::EventRegistered(esp_ble_gatts_cb_param_t::gatts_reg_evt_param *reg)
+  {
+  StartTask();
 
   m_service_id.is_primary = true;
   m_service_id.id.inst_id = 0x00;
@@ -331,6 +360,8 @@ void OvmsBluetoothAppELM327::EventWrite(esp_ble_gatts_cb_param_t::gatts_write_ev
     }
   }
 
+#endif // CONFIG_BLUEDROID_ENABLED
+
 void OvmsBluetoothAppELM327::Enqueue(int type, std::string* data)
   {
   elm_msg_t msg;
@@ -376,6 +407,8 @@ void OvmsBluetoothAppELM327::Task()
     }
   }
 
+#ifdef CONFIG_BLUEDROID_ENABLED
+
 void OvmsBluetoothAppELM327::Send(const std::string& data)
   {
   // Notification payload is limited to MTU - 3 bytes (default MTU 23)
@@ -413,6 +446,8 @@ void OvmsBluetoothAppELM327::Send(const std::string& data)
     len -= chunk;
     }
   }
+
+#endif // CONFIG_BLUEDROID_ENABLED
 
 int OvmsBluetoothAppELM327::Request(uint32_t txid, uint32_t rxid, bool ext29,
                                     const std::string& request, std::string& response,
@@ -459,7 +494,7 @@ void OvmsBluetoothAppELM327::Status(OvmsWriter* writer)
   writer->printf("Bluetooth:      %s\n",
     MyPeripherals->m_esp32bluetooth->IsServiceRunning() ? "running" : "not running (use 'power bluetooth on')");
   writer->printf("Device name:    %s\n", MyConfig.GetParamValue("bluetooth", "elm327.name", "OBDII").c_str());
-  writer->printf("Bonded devices: %d\n", esp_ble_get_bond_device_num());
+  writer->printf("Bonded devices: %d\n", BondCount());
   int remain = PairingWindowRemaining();
   if (remain > 0)
     writer->printf("Pairing window: open (%d s)\n", remain);
