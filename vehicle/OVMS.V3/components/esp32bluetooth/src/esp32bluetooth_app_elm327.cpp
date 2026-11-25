@@ -49,7 +49,7 @@ static const char *TAG = "bt-app-elm327";
 #define ELM_MSG_DATA                2
 
 #define ELM_QUEUE_SIZE              20
-#define ELM_TASK_STACK              5120
+#define ELM_TASK_STACK              3584    // measured max. 2076 bytes (NimBLE, ABRP)
 #define ELM_TASK_PRIORITY           5
 #define ELM_PAIRING_DEFAULT_SEC     120
 
