@@ -34,8 +34,9 @@ The template is the standard hardware 3.1 configuration with these changes:
 - Bluetooth memory allocation from SPI RAM first, dynamic environment memory, 2 connections
 - ``CONFIG_ESP32_WIFI_IRAM_OPT`` and ``CONFIG_ESP32_WIFI_RX_IRAM_OPT`` disabled to free IRAM
   for the Bluetooth controller (WiFi throughput is slightly lower)
-- 10 instead of 16 WiFi static RX buffers and no WiFi AMPDU RX, 1 BLE connection, no BLE scan
-  duplicate filter: this reduces the internal RAM usage
+- 8 instead of 16 WiFi static RX buffers, no WiFi AMPDU RX, no WiFi CSI (channel state
+  information, not used by OVMS), 1 BLE connection, no BLE scan duplicate filter: this reduces
+  the internal RAM usage
 
 To build with the NimBLE host stack instead of Bluedroid, use the NimBLE template::
 
