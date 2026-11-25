@@ -42,7 +42,14 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp32bluetooth.h"
+#ifdef CONFIG_BLUEDROID_ENABLED
 #include "esp32bluetooth_gatts.h"
+#endif
+#ifdef CONFIG_NIMBLE_ENABLED
+// Do not include the NimBLE headers here: they define min() / max() macros,
+// which break the C++ standard library headers.
+struct ble_gatt_access_ctxt;
+#endif
 #include "elm327_engine.h"
 
 #define GATTS_APP_UUID_OVMS_ELM327        0x40
@@ -53,12 +60,17 @@
 
 class OvmsWriter;
 
-class OvmsBluetoothAppELM327 : public esp32bluetoothApp, public Elm327Engine::Transport
+class OvmsBluetoothAppELM327 :
+#ifdef CONFIG_BLUEDROID_ENABLED
+  public esp32bluetoothApp,
+#endif
+  public Elm327Engine::Transport
   {
   public:
     OvmsBluetoothAppELM327();
     ~OvmsBluetoothAppELM327();
 
+#ifdef CONFIG_BLUEDROID_ENABLED
   public:
     // esp32bluetoothApp:
     bool GetConnectSecurity(esp_ble_sec_act_t* action);
@@ -72,6 +84,19 @@ class OvmsBluetoothAppELM327 : public esp32bluetoothApp, public Elm327Engine::Tr
     void EventRead(esp_ble_gatts_cb_param_t::gatts_read_evt_param *read);
     void EventWrite(esp_ble_gatts_cb_param_t::gatts_write_evt_param *write);
     void EventCongest(esp_ble_gatts_cb_param_t::gatts_congest_evt_param *congest);
+#endif
+
+#ifdef CONFIG_NIMBLE_ENABLED
+  public:
+    // Called by the NimBLE host (esp32bluetooth_nimble.cpp):
+    bool NimbleRegister();
+    void NimbleConnect(uint16_t conn_handle);
+    void NimbleDisconnect();
+    void NimbleAuthorized();
+    void NimbleSubscribe(uint16_t attr_handle, bool notify);
+    void NimbleMtu(uint16_t mtu);
+    int NimbleAccess(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt);
+#endif
 
   public:
     // Elm327Engine::Transport:
@@ -94,10 +119,14 @@ class OvmsBluetoothAppELM327 : public esp32bluetoothApp, public Elm327Engine::Tr
 
     static void TaskEntry(void* param);
     void Task();
+    void StartTask();
     void LoadConfig();
     void Send(const std::string& data);
     void Enqueue(int type, std::string* data);
+    int BondCount();
+#ifdef CONFIG_BLUEDROID_ENABLED
     bool IsBonded(esp_bd_addr_t bda);
+#endif
 
   private:
     Elm327Engine m_engine;
@@ -112,6 +141,12 @@ class OvmsBluetoothAppELM327 : public esp32bluetoothApp, public Elm327Engine::Tr
     volatile bool m_notifying;
     volatile bool m_congested;
     int64_t m_pairing_until_us;
+
+#ifdef CONFIG_NIMBLE_ENABLED
+    volatile uint16_t m_conn_handle;
+    volatile uint16_t m_mtu;
+    volatile bool m_authorized;
+#endif
 
     uint32_t m_stat_rx_bytes;
     uint32_t m_stat_tx_bytes;

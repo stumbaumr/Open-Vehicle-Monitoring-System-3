@@ -32,12 +32,20 @@
 #define __ESP32BLUETOOTH_H__
 
 #include <stdint.h>
+#include <string>
+#include "sdkconfig.h"
 #include "esp_bt.h"
+#ifdef CONFIG_BLUEDROID_ENABLED
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
 #include "esp_bt_defs.h"
 #include "esp_bt_main.h"
+#endif
 #include "pcp.h"
+
+// Bluetooth host stack: Bluedroid (CONFIG_BLUEDROID_ENABLED) or NimBLE
+// (CONFIG_NIMBLE_ENABLED, needs less internal RAM). The stack specific parts
+// are StartStack() / StopStack() and the "bt" commands.
 
 class esp32bluetooth : public pcp, public InternalRamAllocated
   {
@@ -55,7 +63,13 @@ class esp32bluetooth : public pcp, public InternalRamAllocated
     void AutoInit();
 
   protected:
+    void AutoStartTicker(std::string event, void* data);
+    bool StartStack();
+    bool StopStack();
+
+  protected:
     bool m_service_running;
+    bool m_autostart_pending;
   };
 
 #endif //#ifndef __ESP32BLUETOOTH_H__
