@@ -161,11 +161,11 @@ the last command.
 
 **Supported AT commands:** ``ATZ``, ``ATWS``, ``ATD``, ``ATI``, ``AT@1``, ``ATE0/1``, ``ATL0/1``,
 ``ATS0/1``, ``ATH0/1``, ``ATCAF0/1``, ``ATSP``, ``ATTP``, ``ATDP``, ``ATDPN``, ``ATSH`` (3, 6 or 8
-digits), ``ATCP``, ``ATCRA``, ``ATAR``, ``ATST``, ``ATRV`` (from metric ``v.b.12v.voltage``),
+digits), ``ATCP``, ``ATCRA`` (``X`` = any digit), ``ATCF``, ``ATCM``, ``ATAR``, ``ATST``, ``ATRV`` (from metric ``v.b.12v.voltage``),
 ``ATIGN``.
 
-**Accepted without effect:** adaptive timing, flow control settings, CAN filters and masks,
-memory, response and display settings, and similar commands (answer ``OK``). The OVMS poller
+**Accepted without effect:** adaptive timing, flow control settings, extended addressing
+(``ATCEA``), memory, response and display settings, and similar commands (answer ``OK``). The OVMS poller
 handles the ISO-TP flow control.
 
 **Not supported:** monitoring (``ATMA``, ``ATMR``, ``ATMT``), buffer dump, STN extensions
@@ -180,6 +180,11 @@ handles the ISO-TP flow control.
   the response ID swaps the target and source bytes (``18DA10F1`` → ``18DAF110``). A functional
   request (``18DB33F1``) only receives the response of ``18DAF110``.
 - In auto protocol mode, a 6 or 8 digit header selects the 29 bit variant of ``elm327.protocol``.
+- Response filter: ``ATCRA`` sets the filter and the mask in one command, ``ATCF`` and ``ATCM``
+  set them separately (default mask: all bits), ``ATAR`` and ``ATD`` remove them. The poller
+  listens to one response ID, so an exact filter (all mask bits set) selects its ID. With a partial
+  mask, the default response ID is kept if it passes the filter, otherwise the lowest ID that
+  passes the filter is used.
 
 **Limitations:**
 

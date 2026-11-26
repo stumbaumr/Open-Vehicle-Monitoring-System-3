@@ -247,8 +247,9 @@ void Elm327Engine::SetDefaults()
   m_header_len = 0;
   m_header = 0;
   m_priority = ELM327_DEFAULT_PRIORITY;
-  m_cra_set = false;
-  m_cra = 0;
+  m_rxf_set = false;
+  m_rxf_filter = 0;
+  m_rxf_mask = 0xffffffff;
   }
 
 void Elm327Engine::Reset()
@@ -441,7 +442,7 @@ bool Elm327Engine::ProcessAT(const std::string& cmd, std::vector<std::string>& o
     }
   if (cmd == "AR")
     {
-    m_cra_set = false;
+    m_rxf_set = false;
     out.push_back("OK");
     return true;
     }
@@ -507,22 +508,43 @@ bool Elm327Engine::ProcessAT(const std::string& cmd, std::vector<std::string>& o
     }
   if (StartsWith(cmd, "CRA"))
     {
+    // Receive address: filter and mask in one command, 'X' = any digit
     std::string arg = cmd.substr(3);
-    uint32_t value;
-    if (arg.empty() || arg.find('X') != std::string::npos)
+    uint32_t value, mask;
+    if (arg.empty())
       {
-      // reset / wildcard filter: use the default response ID
-      m_cra_set = false;
+      m_rxf_set = false;
       }
-    else if ((arg.size() == 3 || arg.size() == 8) && ParseHex(arg, value))
+    else if (ParseFilterArg(arg, value, mask))
       {
-      m_cra = value;
-      m_cra_set = true;
+      m_rxf_filter = value;
+      m_rxf_mask = mask;
+      m_rxf_set = true;
       }
     else
       {
       return false;
       }
+    out.push_back("OK");
+    return true;
+    }
+  if ((StartsWith(cmd, "CF") && !StartsWith(cmd, "CFC")) || StartsWith(cmd, "CM"))
+    {
+    // CAN filter / mask: the ELM327 passes an ID if (id & mask) == (filter & mask)
+    std::string arg = cmd.substr(2);
+    uint32_t value, mask;
+    if (arg.find('X') != std::string::npos || !ParseFilterArg(arg, value, mask))
+      return false;
+    if (!m_rxf_set)
+      {
+      m_rxf_filter = 0;
+      m_rxf_mask = 0xffffffff;
+      m_rxf_set = true;
+      }
+    if (cmd[1] == 'F')
+      m_rxf_filter = value;
+    else
+      m_rxf_mask = value;
     out.push_back("OK");
     return true;
     }
@@ -540,7 +562,7 @@ bool Elm327Engine::ProcessAT(const std::string& cmd, std::vector<std::string>& o
   static const char* const ignored[] =
     {
     "AT0", "AT1", "AT2", "AL", "NL", "BI", "PC", "LP", "M0", "M1", "R0", "R1",
-    "V0", "V1", "D0", "D1", "CFC0", "CFC1", "CEA", "CF", "CM", "FCSH", "FCSD",
+    "V0", "V1", "D0", "D1", "CFC0", "CFC1", "CEA", "FCSH", "FCSD",
     "FCSM", "PP", "PB", "KW", "IB", "IIA", "SI", "FI", "SW", "WM", "SR", "SS",
     "TA", "CSM", "JE", "JS", "JHF", "JTM",
     NULL
@@ -558,33 +580,85 @@ bool Elm327Engine::ProcessAT(const std::string& cmd, std::vector<std::string>& o
   return false;
   }
 
+bool Elm327Engine::ParseFilterArg(const std::string& arg, uint32_t& value, uint32_t& mask) const
+  {
+  // 3 digits (11 bit) or 8 digits (29 bit), 'X' = any digit
+  if (arg.size() != 3 && arg.size() != 8)
+    return false;
+  value = 0;
+  mask = 0;
+  for (char c : arg)
+    {
+    value <<= 4;
+    mask <<= 4;
+    if (c == 'X')
+      continue;
+    if (!IsHexDigit(c))
+      return false;
+    value |= (uint32_t)((c <= '9') ? (c - '0') : (c - 'A' + 10));
+    mask |= 0xf;
+    }
+  return true;
+  }
+
+bool Elm327Engine::FilterMatch(uint32_t id, uint32_t full) const
+  {
+  uint32_t mask = m_rxf_mask & full;
+  return (id & mask) == (m_rxf_filter & mask);
+  }
+
 void Elm327Engine::GetIds(uint32_t& txid, uint32_t& rxid) const
   {
+  uint32_t full;
   if (!IsExt29())
     {
+    full = 0x7ff;
     txid = (m_header_len == 3) ? (m_header & 0x7ff) : OBD_FUNC_ID_11;
-    if (m_cra_set)
-      rxid = m_cra;
-    else if (txid == OBD_FUNC_ID_11)
+    if (txid == OBD_FUNC_ID_11)
       rxid = 0;   // broadcast, the poller listens to 0x7e8…0x7ef
     else
       rxid = txid + 8;
     }
   else
     {
+    full = 0x1fffffff;
     if (m_header_len == 8)
       txid = m_header & 0x1fffffff;
     else if (m_header_len == 6)
       txid = ((uint32_t)m_priority << 24) | m_header;
     else
       txid = OBD_FUNC_ID_29;
-    if (m_cra_set)
-      rxid = m_cra;
-    else if (((txid >> 16) & 0xff) == 0xdb)
+    if (((txid >> 16) & 0xff) == 0xdb)
       rxid = OBD_RESP_ID_29;  // functional request: listen to the first ECU
     else
       rxid = (txid & 0xffff0000) | ((txid & 0xff) << 8) | ((txid >> 8) & 0xff);
     }
+
+  if (!m_rxf_set)
+    return;
+
+  // Response filter: the poller listens to one ID (or the broadcast range).
+  // An exact filter selects its ID. With a partial mask, keep the default ID
+  // if the filter passes it, else use the lowest ID that passes the filter.
+  uint32_t mask = m_rxf_mask & full;
+  if (mask == full)
+    {
+    rxid = m_rxf_filter & full;
+    return;
+    }
+  if (rxid == 0)
+    {
+    for (uint32_t id = 0x7e8; id <= 0x7ef; id++)
+      {
+      if (FilterMatch(id, full))
+        return;
+      }
+    }
+  else if (FilterMatch(rxid, full))
+    {
+    return;
+    }
+  rxid = m_rxf_filter & mask;
   }
 
 void Elm327Engine::ProcessRequest(const std::string& hex, std::vector<std::string>& out)

@@ -11,7 +11,8 @@ Open Vehicle Monitor System v3 - Change log
     optimizations disabled to fit the BLE controller; fewer WiFi static RX buffers, no WiFi AMPDU RX and
     one BLE connection to reduce the internal RAM usage). Alternative build with the NimBLE host stack
     instead of Bluedroid (less internal RAM and flash, NimBLE buffers in SPI RAM):
-    `support/sdkconfig.bluetooth-nimble.hw31`.
+    `support/sdkconfig.bluetooth-nimble.hw31`. The response ID filter supports `ATCRA` (with `X`
+    wildcards), `ATCF` and `ATCM`.
   New commands:
     bt elm327 [status]                                -- show ELM327 emulation status
     bt elm327 pair [<seconds>]                        -- open the pairing window (default 120 s, 0 = close)

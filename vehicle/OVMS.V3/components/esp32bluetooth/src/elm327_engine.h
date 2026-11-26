@@ -163,6 +163,8 @@ class Elm327Engine
     bool IsExt29() const;
     char EffectiveProtocol() const;
     void GetIds(uint32_t& txid, uint32_t& rxid) const;
+    bool FilterMatch(uint32_t id, uint32_t full) const;
+    bool ParseFilterArg(const std::string& arg, uint32_t& value, uint32_t& mask) const;
     std::string ProtocolName(char protocol) const;
 
   protected:
@@ -184,8 +186,9 @@ class Elm327Engine
     int m_header_len;           // ATSH digits: 0 (not set), 3, 6 or 8
     uint32_t m_header;          // ATSH value
     uint8_t m_priority;         // ATCP value (29 bit)
-    bool m_cra_set;
-    uint32_t m_cra;             // ATCRA value
+    bool m_rxf_set;             // response filter set by ATCRA / ATCF / ATCM
+    uint32_t m_rxf_filter;      // filter ID (ATCRA, ATCF)
+    uint32_t m_rxf_mask;        // mask (ATCM, ATCRA wildcards)
 
     std::string m_inbuf;
     std::string m_last;

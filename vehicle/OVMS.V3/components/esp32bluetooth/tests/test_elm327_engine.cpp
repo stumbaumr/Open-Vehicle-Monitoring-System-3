@@ -176,9 +176,13 @@ void test_header_routing() {
     e.ProcessLine("2101");
     CHECK(t.rxid == 0x7a3, "ATCRA without argument resets the filter");
 
+    e.ProcessLine("ATCRA 7AX");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7a3, "ATCRA wildcard passing the default rxid keeps it");
     e.ProcessLine("ATCRA 7EX");
     e.ProcessLine("2101");
-    CHECK(t.rxid == 0x7a3, "ATCRA wildcard uses default rxid");
+    CHECK(t.rxid == 0x7e0, "ATCRA wildcard not passing the default rxid: lowest ID");
+    e.ProcessLine("ATAR");
 
     e.ProcessLine("ATST 64");
     e.ProcessLine("2101");
@@ -186,6 +190,67 @@ void test_header_routing() {
     e.ProcessLine("ATST C8");
     e.ProcessLine("2101");
     CHECK(t.timeout_ms == 800, "ATST C8 -> 200 x 4 ms");
+}
+
+void test_can_filter() {
+    printf("\ntest_can_filter\n");
+    MockTransport t;
+    Elm327Engine e(&t);
+    quiet(e);
+    t.response = bin({0x01});
+
+    e.ProcessLine("ATSH 7E0");
+    CHECK_EQ(e.ProcessLine("ATCF 7EC"), "OK\r\r>", "ATCF accepted");
+    e.ProcessLine("2101");
+    CHECK(t.txid == 0x7e0 && t.rxid == 0x7ec, "ATCF without ATCM: exact filter");
+
+    CHECK_EQ(e.ProcessLine("ATCM 7FF"), "OK\r\r>", "ATCM accepted");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7ec, "ATCF + ATCM 7FF: exact filter");
+
+    e.ProcessLine("ATCF 7E8");
+    e.ProcessLine("ATCM 7F0");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7e8, "partial mask passing the default rxid keeps it");
+
+    e.ProcessLine("ATSH 7DF");
+    e.ProcessLine("ATCF 7E8");
+    e.ProcessLine("ATCM 7F8");
+    e.ProcessLine("0100");
+    CHECK(t.rxid == 0, "broadcast with a filter passing 7E8…7EF stays a broadcast");
+    e.ProcessLine("ATCM 7FF");
+    e.ProcessLine("ATCF 7EC");
+    e.ProcessLine("0100");
+    CHECK(t.rxid == 0x7ec, "broadcast with an exact filter listens to that ID");
+
+    e.ProcessLine("ATAR");
+    e.ProcessLine("ATSH 7E0");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7e8, "ATAR resets the filter");
+
+    CHECK_EQ(e.ProcessLine("ATCF 7EX"), "?\r\r>", "ATCF does not accept wildcards");
+    CHECK_EQ(e.ProcessLine("ATCFC1"), "OK\r\r>", "ATCFC1 (flow control) is not a filter");
+    e.ProcessLine("ATCRA XXX");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7e8, "ATCRA XXX passes all IDs: default rxid");
+    e.ProcessLine("ATCF 7EC");
+    e.ProcessLine("ATCM 000");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7e8, "ATCM 000 passes all IDs: default rxid");
+    e.ProcessLine("ATAR");
+    CHECK_EQ(e.ProcessLine("ATCM 7F"), "?\r\r>", "ATCM needs 3 or 8 digits");
+
+    e.ProcessLine("ATSP7");
+    e.ProcessLine("ATSH DA10F1");
+    e.ProcessLine("ATCF 18DAF110");
+    e.ProcessLine("ATCM 1FFFFFFF");
+    e.ProcessLine("0100");
+    CHECK(t.ext29 && t.rxid == 0x18daf110, "29 bit filter");
+    e.ProcessLine("ATD");
+    e.ProcessLine("ATE0");
+    e.ProcessLine("ATSH 7E4");
+    e.ProcessLine("2101");
+    CHECK(t.rxid == 0x7ec, "ATD resets the filter");
 }
 
 void test_29bit_routing() {
@@ -371,6 +436,7 @@ int main() {
     test_info_commands();
     test_single_frame_request();
     test_header_routing();
+    test_can_filter();
     test_29bit_routing();
     test_auto_protocol_29bit_header();
     test_multi_frame_response();
