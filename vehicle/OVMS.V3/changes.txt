@@ -15,6 +15,7 @@ Open Vehicle Monitor System v3 - Change log
   New commands:
     bt elm327 [status]                                -- show ELM327 emulation status
     bt elm327 pair [<seconds>]                        -- open the pairing window (default 120 s, 0 = close)
+    bt elm327 requests [<lines>|reset]                -- show the request statistics (per CAN ID, service, PID)
   New configs:
     [auto] bluetooth (bool, default yes)              -- start bluetooth at boot
     [bluetooth] minfree (bytes, default 40000)        -- auto start: minimum free internal RAM

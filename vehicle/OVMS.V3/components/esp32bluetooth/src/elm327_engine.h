@@ -49,7 +49,50 @@
 #define ELM327_REQ_TXFAILURE        -2    // CAN transmission failure -> "CAN ERROR"
 #define ELM327_REQ_NORESPONSE       -3    // no response -> "NO DATA"
 #define ELM327_REQ_UNAVAILABLE      -4    // bus/vehicle not available -> "UNABLE TO CONNECT"
+#define ELM327_REQ_BLOCKED          -5    // statistics only: service not allowed
                                           // > 0: UDS negative response code (NRC)
+
+// Per request statistics: a fixed size table of the requests (CAN ID, service, PID)
+// with their result counters. The caller supplies the table memory and the time,
+// and must serialize the access.
+class Elm327RequestStats
+  {
+  public:
+    typedef struct
+      {
+      uint32_t txid;
+      uint16_t pid;
+      uint8_t sid;
+      uint8_t pidlen;
+      uint32_t count;
+      uint32_t ok;
+      uint32_t nrc;
+      uint32_t errors;
+      int16_t last_rc;          // ELM327_REQ_* code or NRC
+      uint16_t last_len;        // response length of the last request
+      uint32_t last_time;       // time of the last request (caller time base)
+      } Entry;
+
+  public:
+    Elm327RequestStats();
+    void Init(Entry* table, int size);
+    void Record(uint32_t txid, uint8_t sid, uint16_t pid, int pidlen,
+                int rc, size_t len, uint32_t now);
+    void Clear(uint32_t now);
+    int Size() const { return m_size; }
+    int Count() const { return m_count; }
+    const Entry& Get(int i) const { return m_table[i]; }
+
+  public:
+    uint32_t m_total;           // all recorded requests
+    uint32_t m_unlisted;        // requests not in the table (table full)
+    uint32_t m_since;           // time of the last Clear()
+
+  protected:
+    Entry* m_table;
+    int m_size;
+    int m_count;
+  };
 
 class Elm327Engine
   {
@@ -72,6 +115,13 @@ class Elm327Engine
 
         // Read the auxiliary battery voltage, return false if not available.
         virtual bool GetVoltage(float& volts) = 0;
+
+        // Called after each request (also blocked and failed requests), for statistics.
+        //  pidlen:     number of PID bytes (0…2) in pid
+        //  rc:         ELM327_REQ_* code (incl. ELM327_REQ_BLOCKED) or NRC (> 0)
+        //  len:        response data length (rc == ELM327_REQ_OK)
+        virtual void RequestDone(uint32_t /*txid*/, uint8_t /*sid*/, uint16_t /*pid*/,
+                                 int /*pidlen*/, int /*rc*/, size_t /*len*/) {}
       };
 
   public:

@@ -27,6 +27,8 @@
 */
 
 #include <string.h>
+#include <algorithm>
+#include <vector>
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp32bluetooth_app_elm327.h"
@@ -52,6 +54,7 @@ static const char *TAG = "bt-app-elm327";
 #define ELM_TASK_STACK              3584    // measured max. 2076 bytes (NimBLE, ABRP)
 #define ELM_TASK_PRIORITY           5
 #define ELM_PAIRING_DEFAULT_SEC     120
+#define ELM_REQSTATS_SIZE           32      // entries, 32 bytes each, in SPIRAM
 
 #ifdef CONFIG_BLUEDROID_ENABLED
 // All attributes require an encrypted (bonded) connection:
@@ -92,6 +95,27 @@ static void elm327_pair(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int
     writer->puts("Note: bluetooth is not running (use 'power bluetooth on')");
   }
 
+static void elm327_requests(int verbosity, OvmsWriter* writer, OvmsCommand* cmd, int argc, const char* const* argv)
+  {
+  int maxlines = ELM_REQSTATS_SIZE;
+  if (argc > 0)
+    {
+    if (strcmp(argv[0], "reset") == 0)
+      {
+      MyBluetoothAppELM327.ClearRequests();
+      writer->puts("Request statistics cleared");
+      return;
+      }
+    maxlines = atoi(argv[0]);
+    if (maxlines < 1)
+      {
+      writer->puts("Error: specify a number of lines (1 or more) or 'reset'");
+      return;
+      }
+    }
+  MyBluetoothAppELM327.ShowRequests(writer, maxlines);
+  }
+
 ////////////////////////////////////////////////////////////////////////
 // OvmsBluetoothAppELM327
 
@@ -116,6 +140,7 @@ OvmsBluetoothAppELM327::OvmsBluetoothAppELM327()
   m_stat_rx_bytes = 0;
   m_stat_tx_bytes = 0;
   m_stat_dropped = 0;
+  m_reqstats_table = NULL;
 
 #ifdef CONFIG_BLUEDROID_ENABLED
   m_app_id = GATTS_APP_UUID_OVMS_ELM327;
@@ -134,6 +159,8 @@ OvmsBluetoothAppELM327::OvmsBluetoothAppELM327()
     cmd_elm->RegisterCommand("status", "Show ELM327 emulation status", elm327_status);
     cmd_elm->RegisterCommand("pair", "Open the pairing window for new devices (0 = close)",
       elm327_pair, "[<seconds>]", 0, 1);
+    cmd_elm->RegisterCommand("requests", "Show the request statistics, sorted by count",
+      elm327_requests, "[<lines>|reset]", 0, 1);
     }
   }
 
@@ -487,6 +514,98 @@ bool OvmsBluetoothAppELM327::GetVoltage(float& volts)
     return false;
   volts = StandardMetrics.ms_v_bat_12v_voltage->AsFloat();
   return true;
+  }
+
+void OvmsBluetoothAppELM327::RequestDone(uint32_t txid, uint8_t sid, uint16_t pid, int pidlen,
+                                         int rc, size_t len)
+  {
+  OvmsMutexLock lock(&m_reqstats_mutex);
+  if (!m_reqstats_table)
+    {
+    // Allocate the table on the first request, so an unused emulation needs no memory:
+    m_reqstats_table = (Elm327RequestStats::Entry*) ExternalRamMalloc(
+      ELM_REQSTATS_SIZE * sizeof(Elm327RequestStats::Entry));
+    if (!m_reqstats_table)
+      return;
+    m_reqstats.Init(m_reqstats_table, ELM_REQSTATS_SIZE);
+    }
+  m_reqstats.Record(txid, sid, pid, pidlen, rc, len, monotonictime);
+  }
+
+void OvmsBluetoothAppELM327::ClearRequests()
+  {
+  OvmsMutexLock lock(&m_reqstats_mutex);
+  m_reqstats.Clear(monotonictime);
+  }
+
+static std::string elm327_result(const Elm327RequestStats::Entry& e)
+  {
+  char buf[24];
+  switch (e.last_rc)
+    {
+    case ELM327_REQ_OK:
+      snprintf(buf, sizeof(buf), "OK (%u bytes)", (unsigned)e.last_len);
+      break;
+    case ELM327_REQ_TIMEOUT:
+    case ELM327_REQ_NORESPONSE:
+      return "NO DATA";
+    case ELM327_REQ_TXFAILURE:
+      return "CAN ERROR";
+    case ELM327_REQ_UNAVAILABLE:
+      return "UNABLE TO CONNECT";
+    case ELM327_REQ_BLOCKED:
+      return "blocked";
+    default:
+      if (e.last_rc > 0)
+        snprintf(buf, sizeof(buf), "NRC %02X", (unsigned)e.last_rc);
+      else
+        snprintf(buf, sizeof(buf), "error %d", (int)e.last_rc);
+      break;
+    }
+  return buf;
+  }
+
+void OvmsBluetoothAppELM327::ShowRequests(OvmsWriter* writer, int maxlines)
+  {
+  // Copy the table, so the lock does not block the requests during the output:
+  std::vector<Elm327RequestStats::Entry> list;
+  uint32_t total, unlisted, since;
+  {
+  OvmsMutexLock lock(&m_reqstats_mutex);
+  for (int i = 0; i < m_reqstats.Count(); i++)
+    list.push_back(m_reqstats.Get(i));
+  total = m_reqstats.m_total;
+  unlisted = m_reqstats.m_unlisted;
+  since = m_reqstats.m_since;
+  }
+
+  std::stable_sort(list.begin(), list.end(),
+    [](const Elm327RequestStats::Entry& a, const Elm327RequestStats::Entry& b)
+      { return a.count > b.count; });
+
+  uint32_t now = monotonictime;
+  if (!list.empty())
+    {
+    writer->puts("TX-ID    Request    Count     OK    NRC  Error  Last result        Age");
+    int lines = 0;
+    for (const Elm327RequestStats::Entry& e : list)
+      {
+      if (lines++ >= maxlines)
+        break;
+      char req[12];
+      if (e.pidlen > 0)
+        snprintf(req, sizeof(req), "%02X %0*X", (unsigned)e.sid, e.pidlen * 2, (unsigned)e.pid);
+      else
+        snprintf(req, sizeof(req), "%02X", (unsigned)e.sid);
+      writer->printf("%-8" PRIX32 " %-8s %7" PRIu32 " %6" PRIu32 " %6" PRIu32 " %6" PRIu32 "  %-17s %4" PRIu32 "s\n",
+        e.txid, req, e.count, e.ok, e.nrc, e.errors, elm327_result(e).c_str(), now - e.last_time);
+      }
+    }
+  writer->printf("%d entries (max. %d), %" PRIu32 " requests in the last %" PRIu32 " s",
+    (int)list.size(), ELM_REQSTATS_SIZE, total, now - since);
+  if (unlisted)
+    writer->printf(", %" PRIu32 " not listed (table full)", unlisted);
+  writer->puts("");
   }
 
 void OvmsBluetoothAppELM327::Status(OvmsWriter* writer)

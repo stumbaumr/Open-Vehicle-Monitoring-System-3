@@ -71,6 +71,15 @@ public:
         v = volts;
         return volt_ok;
     }
+    // request statistics:
+    Elm327RequestStats stats;
+    Elm327RequestStats::Entry table[3];
+    uint32_t now = 0;
+    MockTransport() { stats.Init(table, 3); }
+    void RequestDone(uint32_t t, uint8_t sid, uint16_t pid, int pidlen,
+                     int r, size_t len) override {
+        stats.Record(t, sid, pid, pidlen, r, len, now);
+    }
 };
 
 // Helper: engine with echo off, as most clients configure it
@@ -295,6 +304,53 @@ void test_service_allowlist() {
     CHECK(e.IsServiceAllowed(0x22) && !e.IsServiceAllowed(0x01), "only 22 allowed");
 }
 
+void test_request_stats() {
+    printf("\ntest_request_stats\n");
+    MockTransport t;
+    Elm327Engine e(&t);
+    quiet(e);
+    e.ProcessLine("ATSH7E4");
+
+    t.now = 10;
+    t.response = bin({0x01, 0x02, 0x03});
+    e.ProcessLine("220320");
+    t.now = 11;
+    e.ProcessLine("220320");
+    t.rc = 0x31;
+    e.ProcessLine("22200E");
+    t.rc = ELM327_REQ_TIMEOUT;
+    e.ProcessLine("22200E");
+    CHECK(t.stats.Count() == 2, "one entry per request");
+    const Elm327RequestStats::Entry& a = t.stats.Get(0);
+    CHECK(a.txid == 0x7e4 && a.sid == 0x22 && a.pid == 0x0320 && a.pidlen == 2, "entry key");
+    CHECK(a.count == 2 && a.ok == 2 && a.nrc == 0 && a.errors == 0, "OK counters");
+    CHECK(a.last_rc == ELM327_REQ_OK && a.last_len == 3 && a.last_time == 11, "last result");
+    const Elm327RequestStats::Entry& b = t.stats.Get(1);
+    CHECK(b.count == 2 && b.ok == 0 && b.nrc == 1 && b.errors == 1, "NRC and error counters");
+    CHECK(b.last_rc == ELM327_REQ_TIMEOUT && b.last_len == 0, "last error result");
+
+    e.ProcessLine("ATSH7DF");
+    t.rc = ELM327_REQ_OK;
+    e.ProcessLine("010D");
+    const Elm327RequestStats::Entry& c = t.stats.Get(2);
+    CHECK(c.txid == 0x7df && c.sid == 0x01 && c.pid == 0x0D && c.pidlen == 1, "OBD2 entry");
+
+    e.ProcessLine("1003");
+    CHECK(t.stats.Count() == 3 && t.stats.m_unlisted == 1, "full table: request not listed");
+    CHECK(t.stats.m_total == 6, "total counter");
+
+    t.stats.Clear(20);
+    CHECK(t.stats.Count() == 0 && t.stats.m_total == 0 && t.stats.m_since == 20, "clear");
+    e.ProcessLine("1003");
+    const Elm327RequestStats::Entry& d = t.stats.Get(0);
+    CHECK(d.sid == 0x10 && d.count == 1 && d.errors == 0 && d.last_rc == ELM327_REQ_BLOCKED,
+          "blocked request is recorded");
+
+    int calls = t.calls;
+    e.ProcessLine("22");
+    CHECK(t.stats.m_total == 1 && t.calls == calls, "invalid request is not recorded");
+}
+
 void test_raw_mode() {
     printf("\ntest_raw_mode\n");
     MockTransport t;
@@ -321,6 +377,7 @@ int main() {
     test_negative_and_errors();
     test_service_allowlist();
     test_raw_mode();
+    test_request_stats();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

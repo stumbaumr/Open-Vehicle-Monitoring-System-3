@@ -127,6 +127,24 @@ Commands
 ``bt elm327 pair [<seconds>]``
   Opens the pairing window for new devices (default 120 seconds, 0 closes the window).
 
+``bt elm327 requests [<lines>|reset]``
+  Shows the requests of the app, one line for each CAN ID, service and PID, sorted by count.
+  ``<lines>`` limits the output to the most frequent requests (useful for the server shell,
+  which truncates long output). ``reset`` clears the table. Example::
+
+    TX-ID    Request    Count     OK    NRC  Error  Last result        Age
+    7E4      22 0320       12     12      0      0  OK (3 bytes)         2s
+    743      22 200E       12      0     12      0  NRC 31               3s
+    7E0      10 03          1      0      0      0  blocked             60s
+    3 entries (max. 32), 25 requests in the last 65 s
+
+  - ``OK``: positive responses, ``NRC``: negative responses of the ECU (``7F``),
+    ``Error``: no response (``NO DATA``, ``CAN ERROR``, ``UNABLE TO CONNECT``).
+  - ``blocked``: the service is not allowed by ``elm327.services``.
+  - ``Age``: seconds since the last request.
+  - The table has a maximum of 32 entries (in SPI RAM). When the table is full, new
+    requests are only counted in the total.
+
 ``bt status`` / ``bt clear [<mac>]``
   Show and remove bonded devices.
 

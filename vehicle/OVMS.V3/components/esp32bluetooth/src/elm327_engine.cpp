@@ -94,6 +94,77 @@ static bool StartsWith(const std::string& s, const char* prefix)
   return s.compare(0, strlen(prefix), prefix) == 0;
   }
 
+////////////////////////////////////////////////////////////////////////
+// Elm327RequestStats
+
+Elm327RequestStats::Elm327RequestStats()
+  {
+  m_table = NULL;
+  m_size = 0;
+  m_count = 0;
+  m_total = 0;
+  m_unlisted = 0;
+  m_since = 0;
+  }
+
+void Elm327RequestStats::Init(Entry* table, int size)
+  {
+  m_table = table;
+  m_size = table ? size : 0;
+  m_count = 0;
+  }
+
+void Elm327RequestStats::Record(uint32_t txid, uint8_t sid, uint16_t pid, int pidlen,
+                                int rc, size_t len, uint32_t now)
+  {
+  m_total++;
+  Entry* e = NULL;
+  for (int i = 0; i < m_count; i++)
+    {
+    Entry* t = &m_table[i];
+    if (t->txid == txid && t->sid == sid && t->pid == pid && t->pidlen == pidlen)
+      {
+      e = t;
+      break;
+      }
+    }
+  if (!e)
+    {
+    if (m_count >= m_size)
+      {
+      m_unlisted++;
+      return;
+      }
+    e = &m_table[m_count++];
+    memset(e, 0, sizeof(Entry));
+    e->txid = txid;
+    e->sid = sid;
+    e->pid = pid;
+    e->pidlen = (uint8_t)pidlen;
+    }
+  e->count++;
+  if (rc == ELM327_REQ_OK)
+    e->ok++;
+  else if (rc > 0)
+    e->nrc++;
+  else if (rc != ELM327_REQ_BLOCKED)
+    e->errors++;
+  e->last_rc = (int16_t)rc;
+  e->last_len = (len > 0xffff) ? 0xffff : (uint16_t)len;
+  e->last_time = now;
+  }
+
+void Elm327RequestStats::Clear(uint32_t now)
+  {
+  m_count = 0;
+  m_total = 0;
+  m_unlisted = 0;
+  m_since = now;
+  }
+
+////////////////////////////////////////////////////////////////////////
+// Elm327Engine
+
 Elm327Engine::Elm327Engine(Transport* transport)
   {
   m_transport = transport;
@@ -568,12 +639,17 @@ void Elm327Engine::ProcessRequest(const std::string& hex, std::vector<std::strin
   uint32_t txid, rxid;
   GetIds(txid, rxid);
   uint32_t rxid_display = rxid ? rxid : (IsExt29() ? OBD_RESP_ID_29 : OBD_RESP_ID_11);
+  uint16_t pid = 0;
+  for (size_t i = 0; i < pidlen; i++)
+    pid = (pid << 8) | (uint8_t)bytes[1 + i];
   m_stat_requests++;
 
   if (!IsServiceAllowed(sid))
     {
     // Simulate a negative response "serviceNotSupported"
     m_stat_blocked++;
+    if (m_transport)
+      m_transport->RequestDone(txid, sid, pid, pidlen, ELM327_REQ_BLOCKED, 0);
     std::string nrc;
     nrc += (char)0x7f;
     nrc += (char)sid;
@@ -598,6 +674,7 @@ void Elm327Engine::ProcessRequest(const std::string& hex, std::vector<std::strin
   int rc = m_transport->Request(txid, rxid, IsExt29(), bytes, response, timeout_ms, rxid_used);
   if (rxid_used)
     rxid_display = rxid_used;
+  m_transport->RequestDone(txid, sid, pid, pidlen, rc, (rc == ELM327_REQ_OK) ? response.size() : 0);
 
   if (rc == ELM327_REQ_OK)
     {

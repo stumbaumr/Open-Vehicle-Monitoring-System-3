@@ -51,6 +51,7 @@
 struct ble_gatt_access_ctxt;
 #endif
 #include "elm327_engine.h"
+#include "ovms_mutex.h"
 
 #define GATTS_APP_UUID_OVMS_ELM327        0x40
 #define GATTS_SERVICE_UUID_ELM327         0xfff0
@@ -104,11 +105,15 @@ class OvmsBluetoothAppELM327 :
                 const std::string& request, std::string& response,
                 int timeout_ms, uint32_t& rxid_used);
     bool GetVoltage(float& volts);
+    void RequestDone(uint32_t txid, uint8_t sid, uint16_t pid, int pidlen,
+                     int rc, size_t len);
 
   public:
     void OpenPairingWindow(int seconds);
     int PairingWindowRemaining();
     void Status(OvmsWriter* writer);
+    void ShowRequests(OvmsWriter* writer, int maxlines);
+    void ClearRequests();
 
   private:
     typedef struct
@@ -130,6 +135,9 @@ class OvmsBluetoothAppELM327 :
 
   private:
     Elm327Engine m_engine;
+    OvmsMutex m_reqstats_mutex;
+    Elm327RequestStats m_reqstats;
+    Elm327RequestStats::Entry* m_reqstats_table;
     QueueHandle_t m_queue;
     TaskHandle_t m_task;
 
